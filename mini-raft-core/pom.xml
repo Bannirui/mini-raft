@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <parent>
+        <artifactId>mini-raft</artifactId>
+        <groupId>com.github.bannirui.raft</groupId>
+        <version>1.0.0</version>
+    </parent>
+    <modelVersion>4.0.0</modelVersion>
+
+    <artifactId>mini-raft-core</artifactId>
+    <packaging>jar</packaging>
+    <name>mini-raft-core</name>
+    <description>mini-raft-core</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.github.bannirui.raft</groupId>
+            <artifactId>mini-raft-common</artifactId>
+            <version>${proj.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.baidu</groupId>
+            <artifactId>brpc-java</artifactId>
+        </dependency>
+    </dependencies>
+</project>

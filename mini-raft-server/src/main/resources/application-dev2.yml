@@ -1,0 +1,8 @@
+server:
+  address: 127.0.0.1
+  port: 8002
+
+app:
+  cluster: 127.0.0.1:8001:1,127.0.0.1:8002:2,127.0.0.1:8003:3
+  server: 127.0.0.1:8002:2
+  dataPath: classpath:data
