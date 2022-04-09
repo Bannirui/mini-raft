@@ -2,23 +2,20 @@ package com.github.bannirui.raft.core.storeage;
 
 import cn.hutool.core.collection.CollUtil;
 import cn.hutool.core.convert.Convert;
-import cn.hutool.core.io.FileUtil;
 import cn.hutool.core.io.file.FileMode;
 import cn.hutool.core.map.MapUtil;
 import cn.hutool.core.util.ArrayUtil;
 import cn.hutool.core.util.StrUtil;
-import com.github.bannirui.raft.bean.constant.SegmentLogConstant;
+import com.github.bannirui.raft.bean.constant.FilePathConstant;
 import com.github.bannirui.raft.bean.proto.RaftProto;
 import lombok.Data;
+import org.apache.commons.io.FileUtils;
 
 import java.io.File;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.channels.FileChannel;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.TreeMap;
+import java.util.*;
 
 /**
  *
@@ -26,11 +23,15 @@ import java.util.TreeMap;
  * @author dingrui
  */
 @Data
-public class SegmentLog implements SegmentLogService
+public class SegmentLog
 {
 
+    // .../log
     private String logDir;
+
+    // .../log/data
     private String logDataDir;
+
     private int maxSegmentFileSize;
     private RaftProto.LogMetaData metaData;
     private TreeMap<Long, Segment> startLogIndexSegmentMap = new TreeMap<>();
@@ -44,9 +45,9 @@ public class SegmentLog implements SegmentLogService
     public SegmentLog(String raftDataDir, int maxSegmentFileSize)
     {
         // .../log
-        this.logDir = raftDataDir + File.separator + SegmentLogConstant.LOG_DIR;
+        this.logDir = raftDataDir + File.separator + FilePathConstant.Log.Dir.LOG;
         // .../log/data
-        this.logDataDir = logDir + File.separator + SegmentLogConstant.LOG_DATA_DIR;
+        this.logDataDir = this.logDir + File.separator + FilePathConstant.Log.Dir.LOG_DATA;
         this.maxSegmentFileSize = maxSegmentFileSize;
         File file = new File(this.logDataDir);
         if (!file.exists()) file.mkdirs();
@@ -61,7 +62,6 @@ public class SegmentLog implements SegmentLogService
         }
     }
 
-    @Override
     public RaftProto.LogEntry getEntry(long index)
     {
         if (index == 0) return null;
@@ -75,7 +75,6 @@ public class SegmentLog implements SegmentLogService
         return segment.getEntry(index);
     }
 
-    @Override
     public long getEntryTerm(long index)
     {
         RaftProto.LogEntry entry = this.getEntry(index);
@@ -83,14 +82,21 @@ public class SegmentLog implements SegmentLogService
         return entry.getTerm();
     }
 
-    @Override
     public long getFirstLogIndex()
     {
         if (Objects.isNull(this.metaData)) return -1L;
         return this.metaData.getFirstLogIndex();
     }
 
-    @Override
+    /**
+     * <p>有两种情况下segment为空<ul>
+     *     <li>第一次初始化的时候 firstLogIndex=1 lastLogIndex=0</li>
+     *     <li>snapshot刚完成 日志正好被清理掉了 firstLogIndex=snapshotIndex+1 lastLogIndex=snapshotIndex</li>
+     * </ul></p>
+     * @since 2022/4/9
+     * @author dingrui
+     * @return long
+     */
     public long getLastLogIndex()
     {
         if (MapUtil.isEmpty(this.startLogIndexSegmentMap)) return this.getFirstLogIndex() - 1;
@@ -100,192 +106,180 @@ public class SegmentLog implements SegmentLogService
         return lastSegment.getEndIndex();
     }
 
-    @Override
     public long append(List<RaftProto.LogEntry> entries)
     {
-        long lastLogIndex = this.getLastLogIndex();
-        if (CollUtil.isEmpty(entries)) return lastLogIndex;
+        long newLastLogIndex = this.getLastLogIndex();
+        if (CollUtil.isEmpty(entries)) return newLastLogIndex;
         for (RaftProto.LogEntry entry : entries)
         {
-            lastLogIndex = this.append(entry);
+            if (Objects.isNull(entry)) continue;
+            newLastLogIndex++;
+            int entrySize = entry.getSerializedSize();
+            int segmentSize = this.startLogIndexSegmentMap.size();
+            boolean isNeedNewSegmentFile = false;
+            try
+            {
+                if (segmentSize == 0) isNeedNewSegmentFile = true;
+                else
+                {
+                    Segment segment = this.startLogIndexSegmentMap.lastEntry().getValue();
+                    if (!segment.isCanWrite()) isNeedNewSegmentFile = true;
+                    else if (segment.getFileSize() + entrySize >= this.maxSegmentFileSize)
+                    {
+                        isNeedNewSegmentFile = true;
+                        // 最后一个segment的文件close并改名
+                        segment.getRandomAccessFile().close();
+                        segment.setCanWrite(false);
+                        String newFileName = String.format("%020d-%020d", segment.getStartIndex(), segment.getEndIndex());
+                        String newFullFileName = this.logDataDir + File.separator + newFileName;
+                        File newFile = new File(newFullFileName);
+                        String oldFullFileName = this.logDataDir + File.separator + segment.getFileName();
+                        File oldFile = new File(oldFullFileName);
+                        FileUtils.moveFile(oldFile, newFile);
+                        segment.setFileName(newFileName);
+                        segment.setRandomAccessFile(com.github.bannirui.raft.common.util.FileUtil.open(this.logDataDir, newFileName, FileMode.r));
+                    }
+                }
+                Segment newSegment;
+                // 新建segment文件
+                if (isNeedNewSegmentFile)
+                {
+                    // open new segment file
+                    String newSegmentFileName = String.format("open-%d", newLastLogIndex);
+                    String newFullFileName = this.logDataDir + File.separator + newSegmentFileName;
+                    File newSegmentFile = new File(newFullFileName);
+                    if (!newSegmentFile.exists()) newSegmentFile.createNewFile();
+                    Segment segment = new Segment();
+                    segment.setCanWrite(true);
+                    segment.setStartIndex(newLastLogIndex);
+                    segment.setEndIndex(0);
+                    segment.setFileName(newSegmentFileName);
+                    segment.setRandomAccessFile(com.github.bannirui.raft.common.util.FileUtil.open(this.logDataDir, newSegmentFileName, FileMode.rw));
+                    newSegment = segment;
+                }
+                else newSegment = this.startLogIndexSegmentMap.lastEntry().getValue();
+                // 写proto到segment中
+                if (entry.getIndex() == 0)
+                    entry = RaftProto.LogEntry.newBuilder(entry).setIndex(newLastLogIndex).build();
+                newSegment.setEndIndex(entry.getIndex());
+                newSegment.getEntries().add(new Segment.Record(newSegment.getRandomAccessFile().getFilePointer(), entry));
+                com.github.bannirui.raft.common.util.FileUtil.write(newSegment.getRandomAccessFile(), entry);
+                newSegment.setFileSize(newSegment.getRandomAccessFile().length());
+                if (!this.startLogIndexSegmentMap.containsKey(newSegment.getStartIndex()))
+                    this.startLogIndexSegmentMap.put(newSegment.getStartIndex(), newSegment);
+                this.totalSize += entrySize;
+            }
+            catch (IOException e)
+            {
+                throw new RuntimeException("append raft log exception, msg=" + e.getMessage());
+            }
         }
-        return lastLogIndex;
+        return newLastLogIndex;
     }
 
-    @Override
     public long append(RaftProto.LogEntry entry)
     {
-        long lastLogIndex = this.getLastLogIndex();
-        if (Objects.isNull(entry)) return lastLogIndex;
-        int entrySize = entry.getSerializedSize();
-        boolean needNewSegmentFile = false;
-        if (MapUtil.isEmpty(this.startLogIndexSegmentMap)) needNewSegmentFile = true;
-        else
-        {
-            Segment segment = this.startLogIndexSegmentMap.lastEntry().getValue();
-            if (!segment.isCanWrite()) needNewSegmentFile = true;
-            else if (segment.getFileSize() + entrySize >= this.maxSegmentFileSize)
-            {
-                needNewSegmentFile = true;
-                try
-                {
-                    segment.getRandomAccessFile().close();
-                }
-                catch (Exception e)
-                {
-                    throw new RuntimeException("append log failed");
-                }
-                segment.setCanWrite(false);
-                String newFileName = String.format("%020d-%020d", segment.getStartIndex(), segment.getEndIndex());
-                String newFullFileName = this.logDataDir + File.separator + newFileName;
-                File newFile = new File(newFullFileName);
-                String preFullFileName = this.logDataDir + File.separator + segment.getFileName();
-                File preFile = new File(preFullFileName);
-                FileUtil.move(preFile, newFile, true);
-                segment.setFileName(newFileName);
-                RandomAccessFile randomAccessFile = FileUtil.createRandomAccessFile(newFile, FileMode.r);
-                segment.setRandomAccessFile(randomAccessFile);
-            }
-        }
-        Segment segment = null;
-        if (needNewSegmentFile)
-        {
-            String newSegmentFileName = String.format("open-%d", lastLogIndex);
-            String newFullFileName = this.logDir + File.separator + newSegmentFileName;
-            File newSegmentFile = new File(newFullFileName);
-            if (!newSegmentFile.exists())
-            {
-                try
-                {
-                    newSegmentFile.createNewFile();
-                }
-                catch (IOException e)
-                {
-                    throw new RuntimeException("append log failed");
-                }
-            }
-            segment = Segment.builder().canWrite(true).startIndex(++lastLogIndex).endIndex(0).fileName(newSegmentFileName).randomAccessFile(FileUtil.createRandomAccessFile(newSegmentFile, FileMode.rw)).build();
-        }
-        else
-        {
-            segment = this.startLogIndexSegmentMap.lastEntry().getValue();
-        }
-        if (entry.getIndex() == 0) entry = RaftProto.LogEntry.newBuilder().setIndex(lastLogIndex).build();
-        segment.setEndIndex(entry.getIndex());
-        RandomAccessFile randomAccessFile = segment.getRandomAccessFile();
-        long offset;
-        try
-        {
-            offset = randomAccessFile.getFilePointer();
-        }
-        catch (Exception e)
-        {
-            throw new RuntimeException("append log failed");
-        }
-        segment.getEntries().add(new Segment.Record(offset, entry));
-        com.github.bannirui.raft.common.util.FileUtil.write(randomAccessFile, entry);
-        if (!this.startLogIndexSegmentMap.containsKey(segment.getStartIndex()))
-            this.startLogIndexSegmentMap.put(segment.getStartIndex(), segment);
-        this.totalSize += entrySize;
-        return lastLogIndex;
+        List<RaftProto.LogEntry> l = new ArrayList<RaftProto.LogEntry>()
+        {{
+            add(entry);
+        }};
+        return this.append(l);
     }
 
-    @Override
-    public void truncatePrefix(long firstIndex)
+    public void truncatePrefix(long newFirstIndex)
     {
         long oldFirstIndex = this.getFirstLogIndex();
-        if (firstIndex <= oldFirstIndex) return;
+        if (newFirstIndex <= oldFirstIndex) return;
         while (MapUtil.isNotEmpty(this.startLogIndexSegmentMap))
         {
             Segment segment = this.startLogIndexSegmentMap.firstEntry().getValue();
             if (segment.isCanWrite()) break;
-            if (firstIndex <= segment.getEndIndex()) break;
+            if (newFirstIndex <= segment.getEndIndex()) break;
             File oldFile = new File(this.logDataDir + File.separator + segment.getFileName());
-            com.github.bannirui.raft.common.util.FileUtil.close(segment.getRandomAccessFile());
-            FileUtil.del(oldFile);
-            this.totalSize -= segment.getFileSize();
-            this.startLogIndexSegmentMap.remove(segment.getStartIndex());
+            try
+            {
+                com.github.bannirui.raft.common.util.FileUtil.close(segment.getRandomAccessFile());
+                FileUtils.forceDelete(oldFile);
+                this.totalSize -= segment.getFileSize();
+                this.startLogIndexSegmentMap.remove(segment.getStartIndex());
+            }
+            catch (Exception ignored)
+            {
+
+            }
         }
         long newActualFirstIndex;
-        if (MapUtil.isEmpty(this.startLogIndexSegmentMap)) newActualFirstIndex = firstIndex;
+        if (MapUtil.isEmpty(this.startLogIndexSegmentMap)) newActualFirstIndex = newFirstIndex;
         else newActualFirstIndex = this.startLogIndexSegmentMap.firstKey();
         this.updateMetaData(null, null, newActualFirstIndex, null);
     }
 
-    @Override
-    public void truncateSuffix(long endIndex)
+    public void truncateSuffix(long newEndIndex)
     {
-        if (endIndex >= this.getLastLogIndex()) return;
+        if (newEndIndex >= this.getLastLogIndex()) return;
         while (MapUtil.isNotEmpty(this.startLogIndexSegmentMap))
         {
-            Segment segment = this.startLogIndexSegmentMap.lastEntry().getValue();
-            if (endIndex == segment.getEndIndex()) break;
-            else if (endIndex < segment.getStartIndex())
+            try
             {
-                this.totalSize -= segment.getFileSize();
-                try
+                Segment segment = this.startLogIndexSegmentMap.lastEntry().getValue();
+                if (newEndIndex == segment.getEndIndex()) break;
+                else if (newEndIndex < segment.getStartIndex())
                 {
+                    this.totalSize -= segment.getFileSize();
                     segment.getRandomAccessFile().close();
+                    String fullFileName = this.logDataDir + File.separator + segment.getFileName();
+                    FileUtils.forceDelete(new File(fullFileName));
+                    this.startLogIndexSegmentMap.remove(segment.getStartIndex());
                 }
-                catch (IOException ignored)
+                else if (newEndIndex < segment.getEndIndex())
                 {
-                }
-                String fullFileName = this.logDir + File.separator + segment.getFileName();
-                FileUtil.del(fullFileName);
-                this.startLogIndexSegmentMap.remove(segment.getStartIndex());
-            }
-            else if (endIndex < segment.getEndIndex())
-            {
-                int i = (int) (endIndex + 1 - segment.getStartIndex());
-                segment.setEndIndex(endIndex);
-                long newFileSize = segment.getEntries().get(i).getOffset();
-                this.totalSize -= (segment.getFileSize() - newFileSize);
-                segment.setFileSize(newFileSize);
-                segment.getEntries().removeAll(segment.getEntries().subList(i, segment.getEntries().size()));
-                FileChannel channel = segment.getRandomAccessFile().getChannel();
-                try
-                {
+                    int i = (int) (newEndIndex + 1 - segment.getStartIndex());
+                    segment.setEndIndex(newEndIndex);
+                    long newFileSize = segment.getEntries().get(i).getOffset();
+                    this.totalSize -= (segment.getFileSize() - newFileSize);
+                    segment.setFileSize(newFileSize);
+                    segment.getEntries().removeAll(segment.getEntries().subList(i, segment.getEntries().size()));
+                    FileChannel channel = segment.getRandomAccessFile().getChannel();
                     channel.truncate(segment.getFileSize());
                     channel.close();
                     segment.getRandomAccessFile().close();
+                    String oldFullFileName = this.logDataDir + File.separator + segment.getFileName();
+                    String newFileName = String.format("%020d-%020d", segment.getStartIndex(), segment.getEndIndex());
+                    segment.setFileName(newFileName);
+                    String newFullFileName = this.logDataDir + File.separator + newFileName;
+                    File newFile = new File(newFullFileName);
+                    new File(oldFullFileName).renameTo(new File(newFullFileName));
+                    segment.setRandomAccessFile(com.github.bannirui.raft.common.util.FileUtil.open(this.logDataDir, segment.getFileName(), FileMode.rw));
                 }
-                catch (Exception ignored)
-                {
-                }
-                String oldFullFileName = this.logDir + File.separator + segment.getFileName();
-                String newFileName = String.format("%020d-%020d", segment.getStartIndex(), segment.getEndIndex());
-                segment.setFileName(newFileName);
-                String newFullFileName = this.logDir + File.separator + newFileName;
-                File newFile = new File(newFullFileName);
-                new File(oldFullFileName).renameTo(newFile);
-                segment.setRandomAccessFile(FileUtil.createRandomAccessFile(newFile, FileMode.rw));
+            }
+            catch (Exception ignored)
+            {
             }
         }
     }
 
-    @Override
     public void loadSegmentData(Segment segment)
     {
         if (Objects.isNull(segment)) return;
-        RandomAccessFile f = segment.getRandomAccessFile();
-        long totalLength = segment.getFileSize();
-        long offset = 0L;
-        while (offset < totalLength)
+        try
         {
-            RaftProto.LogEntry entry = com.github.bannirui.raft.common.util.FileUtil.read(f, RaftProto.LogEntry.class);
-            if (Objects.isNull(entry)) return;
-            Segment.Record record = new Segment.Record(offset, entry);
-            segment.getEntries().add(record);
-            try
+            RandomAccessFile f = segment.getRandomAccessFile();
+            long totalLength = segment.getFileSize();
+            long offset = 0L;
+            while (offset < totalLength)
             {
+                RaftProto.LogEntry entry = com.github.bannirui.raft.common.util.FileUtil.read(f, RaftProto.LogEntry.class);
+                if (Objects.isNull(entry)) throw new RuntimeException("read segment log failed");
+                Segment.Record record = new Segment.Record(offset, entry);
+                segment.getEntries().add(record);
                 offset = f.getFilePointer();
             }
-            catch (IOException ignored)
-            {
-                throw new RuntimeException("file not found");
-            }
+            this.totalSize += totalLength;
         }
-        this.totalSize += totalLength;
+        catch (Exception e)
+        {
+            throw new RuntimeException("file not found");
+        }
         int entrySize = segment.getEntries().size();
         if (entrySize > 0)
         {
@@ -294,43 +288,43 @@ public class SegmentLog implements SegmentLogService
         }
     }
 
-    @Override
+    /**
+     * @since 2022/4/9
+     * @author dingrui
+     * @param fileName open-1 open-2 ... 或 1-2 3-7 ...
+     * @return void
+     */
     public void readSegment(String fileName)
     {
-        if (StrUtil.isBlank(fileName)) return;
-        String[] splitArray = fileName.split("-");
-        if (ArrayUtil.isEmpty(splitArray) || splitArray.length != 2) return;
-        Segment segment = new Segment();
-        segment.setFileName(fileName);
-        if (Objects.equals(splitArray[0], "open"))
-        {
-            segment.setCanWrite(true);
-            segment.setStartIndex(Convert.toLong(splitArray[1]));
-            segment.setEndIndex(0);
-        }
-        else
-        {
-            segment.setCanWrite(false);
-            segment.setStartIndex(Convert.toLong(splitArray[0]));
-            segment.setEndIndex(Convert.toLong(splitArray[1]));
-        }
-        String fullFileName = this.logDataDir + File.separator + fileName;
-        RandomAccessFile randomAccessFile = FileUtil.createRandomAccessFile(new File(fullFileName), FileMode.rw);
-        segment.setRandomAccessFile(randomAccessFile);
-        long fileSize = 0L;
         try
         {
-            fileSize = randomAccessFile.length();
+            if (StrUtil.isBlank(fileName)) return;
+            String[] splitArray = fileName.split(StrUtil.DASHED);
+            if (ArrayUtil.isEmpty(splitArray) || splitArray.length != 2) return;
+            Segment segment = new Segment();
+            segment.setFileName(fileName);
+            if (Objects.equals(splitArray[0], "open"))
+            {
+                segment.setCanWrite(true);
+                segment.setStartIndex(Convert.toLong(splitArray[1]));
+                segment.setEndIndex(0);
+            }
+            else
+            {
+                segment.setCanWrite(false);
+                segment.setStartIndex(Convert.toLong(splitArray[0]));
+                segment.setEndIndex(Convert.toLong(splitArray[1]));
+            }
+            RandomAccessFile randomAccessFile = com.github.bannirui.raft.common.util.FileUtil.open(this.logDataDir, fileName, FileMode.rw);
+            segment.setRandomAccessFile(randomAccessFile);
+            segment.setFileSize(randomAccessFile.length());
+            this.startLogIndexSegmentMap.put(segment.getStartIndex(), segment);
         }
         catch (Exception ignored)
         {
-            return;
         }
-        segment.setFileSize(fileSize);
-        this.startLogIndexSegmentMap.put(segment.getStartIndex(), segment);
     }
 
-    @Override
     public void readSegments()
     {
         List<String> fileNames = null;
@@ -346,12 +340,12 @@ public class SegmentLog implements SegmentLogService
             readSegment(fileName);
     }
 
-    @Override
     public RaftProto.LogMetaData readMetaData()
     {
-        String fileName = this.logDir + File.separator + "metadata";
+        // .../log/metadata
+        String fileName = this.logDir + File.separator + FilePathConstant.Log.Dir.LOG_METADATA;
         File file = new File(fileName);
-        try (RandomAccessFile f = FileUtil.createRandomAccessFile(file, FileMode.r))
+        try (RandomAccessFile f = new RandomAccessFile(file, "r"))
         {
             return com.github.bannirui.raft.common.util.FileUtil.read(f, RaftProto.LogMetaData.class);
         }
@@ -361,24 +355,23 @@ public class SegmentLog implements SegmentLogService
         }
     }
 
-    @Override
-    public void updateMetaData(Long currentTerm, Integer votedFor, Long firstLogIndex, Long commitIndex)
+    public void updateMetaData(Long curTerm, Integer votedFor, Long firstLogIndex, Long commitIndex)
     {
         RaftProto.LogMetaData.Builder builder = RaftProto.LogMetaData.newBuilder(this.metaData);
-        if (Objects.nonNull(currentTerm)) builder.setCurrentTerm(currentTerm);
+        if (Objects.nonNull(curTerm)) builder.setCurrentTerm(curTerm);
         if (Objects.nonNull(votedFor)) builder.setVotedFor(votedFor);
         if (Objects.nonNull(firstLogIndex)) builder.setFirstLogIndex(firstLogIndex);
         if (Objects.nonNull(commitIndex)) builder.setCommitIndex(commitIndex);
         this.metaData = builder.build();
-        String fileName = this.logDir + File.separator + "metadata";
+        // .../log/metadata
+        String fileName = this.logDir + File.separator + FilePathConstant.Log.Dir.LOG_METADATA;
         File file = new File(fileName);
-        try (RandomAccessFile f = FileUtil.createRandomAccessFile(file, FileMode.rw))
+        try (RandomAccessFile f = new RandomAccessFile(file, "rw"))
         {
-            com.github.bannirui.raft.common.util.FileUtil.write(f, metaData);
+            com.github.bannirui.raft.common.util.FileUtil.write(f, this.metaData);
         }
         catch (Exception ignored)
         {
-
         }
     }
 }

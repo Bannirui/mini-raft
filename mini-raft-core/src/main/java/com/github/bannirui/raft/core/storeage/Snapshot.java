@@ -6,10 +6,8 @@ import cn.hutool.core.map.MapUtil;
 import com.github.bannirui.raft.bean.constant.FilePathConstant;
 import com.github.bannirui.raft.bean.proto.RaftProto;
 import com.github.bannirui.raft.common.util.FileUtil;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
 import lombok.Data;
-import lombok.NoArgsConstructor;
+import org.apache.commons.io.FileUtils;
 
 import java.io.File;
 import java.io.IOException;
@@ -30,9 +28,6 @@ import java.util.concurrent.locks.ReentrantLock;
  * @author dingrui
  */
 @Data
-@NoArgsConstructor
-@AllArgsConstructor
-@Builder
 public class Snapshot
 {
 
@@ -45,7 +40,7 @@ public class Snapshot
 
     /**
      * 目录
-     * classpath:data/snapshot
+     * ./data/snapshot
      */
     private String snapshotDir;
     private RaftProto.SnapshotMetaData metaData;
@@ -65,7 +60,7 @@ public class Snapshot
 
     public Snapshot(String dataDir)
     {
-        // classpath:data/snapshot
+        // ./data/snapshot
         this.snapshotDir = dataDir + File.separator + FilePathConstant.Snapthot.Dir.SNAPSHOT;
         String snapshotDataDir = this.snapshotDir + File.separator + FilePathConstant.Snapthot.Dir.SNAPSHOT_DATA;
         File file = new File(snapshotDataDir);
@@ -78,38 +73,35 @@ public class Snapshot
             this.metaData = RaftProto.SnapshotMetaData.newBuilder().build();
     }
 
+    /**
+     * <p>打开./data/snapshot/data目录下的文件 如果是软连接 就打开实际文件句柄</p>
+     * @since 2022/4/9
+     * @author dingrui
+     * @return java.util.TreeMap<java.lang.String, com.github.bannirui.raft.core.storeage.Snapshot.SnapshotDataFile> key=文件名 value=文件句柄
+     */
     public TreeMap<String, SnapshotDataFile> openSnapshotDataFiles()
     {
-        // classpath:data/snapshot/data
-        String snapshotDataDir = this.snapshotDir + File.separator + FilePathConstant.Snapthot.Dir.SNAPSHOT_DATA;
-        Path snapshotDataPath = FileSystems.getDefault().getPath(snapshotDataDir);
-        Path snapshotDataRealPath = null;
-        try
-        {
-            snapshotDataRealPath = snapshotDataPath.toRealPath();
-        }
-        catch (Exception ignored)
-        {
-        }
-        if (Objects.isNull(snapshotDataRealPath)) return null;
-        String dir = snapshotDataRealPath.toString();
-        List<String> fileNames = null;
-        try
-        {
-            fileNames = FileUtil.getSortedFilesInDirectory(dir, dir);
-        }
-        catch (Exception ignored)
-        {
-        }
-        if (CollUtil.isEmpty(fileNames)) return null;
         TreeMap<String, SnapshotDataFile> ret = new TreeMap<>();
-        for (String fileName : fileNames)
+        // ./data/snapshot/data
+        String snapshotDataDir = this.snapshotDir + File.separator + FilePathConstant.Snapthot.Dir.SNAPSHOT_DATA;
+        try
         {
-            RandomAccessFile f = cn.hutool.core.io.FileUtil.createRandomAccessFile(new File(dir + File.separator + fileName), FileMode.r);
-            SnapshotDataFile s = new SnapshotDataFile();
-            s.setFileName(fileName);
-            s.setRandomAccessFile(f);
-            ret.put(fileName, s);
+            Path snapshotDataPath = FileSystems.getDefault().getPath(snapshotDataDir);
+            snapshotDataPath = snapshotDataPath.toRealPath();
+            snapshotDataDir = snapshotDataPath.toString();
+            List<String> fileNames = FileUtil.getSortedFilesInDirectory(snapshotDataDir, snapshotDataDir);
+            if (CollUtil.isEmpty(fileNames)) return ret;
+            for (String fileName : fileNames)
+            {
+                RandomAccessFile f = FileUtil.open(snapshotDataDir, fileName, FileMode.r);
+                SnapshotDataFile s = new SnapshotDataFile();
+                s.setFileName(fileName);
+                s.setRandomAccessFile(f);
+                ret.put(fileName, s);
+            }
+        }
+        catch (Exception ignored)
+        {
         }
         return ret;
     }
@@ -117,10 +109,10 @@ public class Snapshot
     public void closeSnapshotDataFiles(Map<String, SnapshotDataFile> data)
     {
         if (MapUtil.isEmpty(data)) return;
-        data.forEach((key, value) -> {
+        data.forEach((fileName, file) -> {
             try
             {
-                value.getRandomAccessFile().close();
+                file.getRandomAccessFile().close();
             }
             catch (IOException ignored)
             {
@@ -130,11 +122,11 @@ public class Snapshot
 
     public RaftProto.SnapshotMetaData readMetaData()
     {
-        // classpath:data/snapshot/metadata
+        // ./data/snapshot/metadata
         String fileName = this.snapshotDir + File.separator + FilePathConstant.Snapthot.Dir.SNAPSHOT_METADATA;
         File file = new File(fileName);
         RaftProto.SnapshotMetaData ret = null;
-        try (RandomAccessFile f = cn.hutool.core.io.FileUtil.createRandomAccessFile(file, FileMode.r))
+        try (RandomAccessFile f = new RandomAccessFile(file, "r"))
         {
             ret = FileUtil.read(f, RaftProto.SnapshotMetaData.class);
         }
@@ -147,25 +139,25 @@ public class Snapshot
     public void updateMetaData(String dir, Long lastIncludedIndex, Long lastIncludedTerm, RaftProto.Configuration configuration)
     {
         RaftProto.SnapshotMetaData metaData = RaftProto.SnapshotMetaData.newBuilder().setLastIncludedIndex(lastIncludedIndex).setLastIncludedTerm(lastIncludedTerm).setConfiguration(configuration).build();
-        String fileName = dir + File.separator + "metadata";
-        File dirFile = new File(dir);
-        if (!dirFile.exists()) dirFile.mkdirs();
-        File file = new File(fileName);
-        if (file.exists()) cn.hutool.core.io.FileUtil.del(file);
+        // ./data/snapshot/metadata
+        String snapshotMetaFile = dir + File.separator + FilePathConstant.Snapthot.Dir.SNAPSHOT_METADATA;
+        RandomAccessFile randomAccessFile = null;
         try
         {
+            File dirFile = new File(dir);
+            if (!dirFile.exists()) dirFile.mkdirs();
+            File file = new File(snapshotMetaFile);
+            if (!file.exists()) FileUtils.forceDelete(file);
             file.createNewFile();
+            randomAccessFile = new RandomAccessFile(file, "rw");
+            FileUtil.write(randomAccessFile, metaData);
         }
         catch (Exception ignored)
         {
         }
-        if (!file.exists()) return;
-        try (RandomAccessFile f = cn.hutool.core.io.FileUtil.createRandomAccessFile(file, FileMode.rw))
+        finally
         {
-            FileUtil.write(f, metaData);
-        }
-        catch (Exception ignored)
-        {
+            FileUtil.close(randomAccessFile);
         }
     }
 }

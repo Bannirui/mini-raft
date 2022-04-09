@@ -22,12 +22,12 @@ public interface AsyncConsensusService extends ConsensusService
     Future<RaftProto.VoteResponse> preVote(RaftProto.VoteRequest request, RpcCallback<RaftProto.VoteResponse> callback);
 
     /**
-     * <p>{@link ConsensusService#requestVote}</p>
+     * <p>{@link ConsensusService#vote}</p>
      * @since 2022/4/4
      * @author dingrui
      * @return java.util.concurrent.Future<com.github.bannirui.raft.bean.proto.RaftProto.VoteResponse>
      */
-    Future<RaftProto.VoteResponse> requestVote(RaftProto.VoteRequest request, RpcCallback<RaftProto.VoteResponse> callback);
+    Future<RaftProto.VoteResponse> vote(RaftProto.VoteRequest request, RpcCallback<RaftProto.VoteResponse> callback);
 
     /**
      * <p>{@link ConsensusService#appendEntries}</p>

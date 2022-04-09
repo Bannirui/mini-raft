@@ -7,6 +7,16 @@ package com.github.bannirui.raft.bean.constant;
  */
 public interface FilePathConstant
 {
+    interface Log
+    {
+        interface Dir
+        {
+            String LOG = "log";
+            String LOG_DATA = "data";
+            String LOG_METADATA = "metadata";
+        }
+    }
+
     interface Snapthot
     {
         interface Dir
@@ -15,6 +25,15 @@ public interface FilePathConstant
             String SNAPSHOT_DATA = "data";
             String SNAPSHOT_METADATA = "metadata";
             String SNAPSHOT_TMP = ".tmp";
+            String SNAPSHOT_TMP_DATA = "data";
+        }
+    }
+
+    interface Rocksdb
+    {
+        interface Dir
+        {
+            String ROCKSDB = "rocksdb";
         }
     }
 }

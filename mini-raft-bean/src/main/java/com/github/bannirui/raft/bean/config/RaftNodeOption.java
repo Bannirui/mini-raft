@@ -1,18 +1,14 @@
-package com.github.bannirui.raft.core;
+package com.github.bannirui.raft.bean.config;
 
-import lombok.AllArgsConstructor;
 import lombok.Data;
-import lombok.NoArgsConstructor;
 
 /**
- * <p>raft配置选项</p>
+ * <p>raft节点配置选项</p>
  * @since 2022/4/4
  * @author dingrui
  */
 @Data
-@NoArgsConstructor
-@AllArgsConstructor
-public class Option
+public class RaftNodeOption
 {
     /**
      * follower转换candidate时间
@@ -21,10 +17,11 @@ public class Option
     private int electionTimeoutMS = 5_000;
 
     /**
-     * leader发送心跳
+     * leader发送心跳间隔
      * 单位:ms
+     * leader定时任务发送心跳的fixed delay
      */
-    private int heartbeatPeriodMS = 5_00;
+    private int heartbeatPeriodMS = 500;
 
     /**
      * snapshot定时器执行间隔
@@ -34,9 +31,13 @@ public class Option
 
     /**
      * log entry进行snapshot的阈值大小
+     * 达到多大才做snapshot
      */
     private int snapshotMinLogSize = 100 * 1024 * 1024;
 
+    /**
+     * 500k
+     */
     private int maxSnapshotBytesPerRequest = 500 * 1024;
     private int maxLogEntriesPerRequest = 5_000;
 
@@ -44,11 +45,12 @@ public class Option
      * 单个segment文件大小
      * 100M
      */
-    private int maxSegmentFileSize = 100 * 1_024 * 1_024;
+    private int maxSegmentFileSize = 100 * 1024 * 1024;
 
     /**
      * follower与leader差距阈值
      * 在阈值之内才可以参与选举和提供服务
+     * follower日志落后leader 则被leader主观判断异常
      */
     private long catchupMargin = 500;
 
@@ -74,6 +76,7 @@ public class Option
     /**
      * raft的log和snapshot父目录
      * 绝对路径
+     * ./data
      */
     private String dataDir = System.getProperty("com.github.bannirui.raft.data.dir");
 }

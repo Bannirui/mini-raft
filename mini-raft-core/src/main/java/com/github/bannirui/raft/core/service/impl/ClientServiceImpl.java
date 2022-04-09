@@ -3,7 +3,7 @@ package com.github.bannirui.raft.core.service.impl;
 import cn.hutool.core.collection.CollUtil;
 import com.github.bannirui.raft.bean.proto.RaftProto;
 import com.github.bannirui.raft.common.util.RaftConfigurationUtil;
-import com.github.bannirui.raft.core.Node;
+import com.github.bannirui.raft.core.RaftNode;
 import com.github.bannirui.raft.core.Peer;
 import com.github.bannirui.raft.core.service.ClientService;
 
@@ -19,11 +19,11 @@ import java.util.Objects;
 public class ClientServiceImpl implements ClientService
 {
 
-    private Node node;
+    private RaftNode raftNode;
 
-    public ClientServiceImpl(Node node)
+    public ClientServiceImpl(RaftNode raftNode)
     {
-        this.node = node;
+        this.raftNode = raftNode;
     }
 
     @Override
@@ -32,19 +32,19 @@ public class ClientServiceImpl implements ClientService
         RaftProto.GetLeaderResponse.Builder responseBuilder = RaftProto.GetLeaderResponse.newBuilder();
         responseBuilder.setResCode(RaftProto.ResCode.SUCCESS);
         RaftProto.Endpoint.Builder endpointBuilder = RaftProto.Endpoint.newBuilder();
-        this.node.getLock().lock();
+        this.raftNode.getLock().lock();
         try
         {
-            int leaderId = this.node.getLeaderId();
+            int leaderId = this.raftNode.getLeaderId();
             if (leaderId == 0) responseBuilder.setResCode(RaftProto.ResCode.FAIL);
-            else if (Objects.equals(leaderId, this.node.getLocalServer().getServerId()))
+            else if (Objects.equals(leaderId, this.raftNode.getLocalServer().getServerId()))
             {
-                endpointBuilder.setHost(this.node.getLocalServer().getEndpoint().getHost());
-                endpointBuilder.setPort(this.node.getLocalServer().getEndpointOrBuilder().getPort());
+                endpointBuilder.setHost(this.raftNode.getLocalServer().getEndpoint().getHost());
+                endpointBuilder.setPort(this.raftNode.getLocalServer().getEndpointOrBuilder().getPort());
             }
             else
             {
-                RaftProto.Configuration configuration = this.node.getConfiguration();
+                RaftProto.Configuration configuration = this.raftNode.getConfiguration();
                 for (RaftProto.Server server : configuration.getServersList())
                 {
                     if (Objects.equals(server.getServerId(), leaderId))
@@ -58,7 +58,7 @@ public class ClientServiceImpl implements ClientService
         }
         finally
         {
-            this.node.getLock().unlock();
+            this.raftNode.getLock().unlock();
         }
         responseBuilder.setLeader(endpointBuilder.build());
         return responseBuilder.build();
@@ -69,21 +69,21 @@ public class ClientServiceImpl implements ClientService
     {
         RaftProto.GetConfigurationResponse.Builder responseBuilder = RaftProto.GetConfigurationResponse.newBuilder();
         responseBuilder.setResCode(RaftProto.ResCode.SUCCESS);
-        this.node.getLock().lock();
+        this.raftNode.getLock().lock();
         try
         {
-            RaftProto.Configuration configuration = this.node.getConfiguration();
+            RaftProto.Configuration configuration = this.raftNode.getConfiguration();
             List<RaftProto.Server> serversList = null;
             if (Objects.nonNull(configuration) && CollUtil.isNotEmpty(serversList = configuration.getServersList()))
             {
-                RaftProto.Server leader = serversList.stream().filter(Objects::nonNull).filter(e -> Objects.equals(e.getServerId(), this.node.getLeaderId())).findAny().orElseGet(() -> null);
+                RaftProto.Server leader = serversList.stream().filter(Objects::nonNull).filter(e -> Objects.equals(e.getServerId(), this.raftNode.getLeaderId())).findAny().orElseGet(() -> null);
                 responseBuilder.setLeader(leader);
                 responseBuilder.addAllServers(serversList);
             }
         }
         finally
         {
-            this.node.getLock().unlock();
+            this.raftNode.getLock().unlock();
         }
         return responseBuilder.build();
     }
@@ -102,7 +102,7 @@ public class ClientServiceImpl implements ClientService
         }
         for (RaftProto.Server server : request.getServersList())
         {
-            if (this.node.getPeerMap().containsKey(server.getServerId()))
+            if (this.raftNode.getPeerMap().containsKey(server.getServerId()))
             {
                 responseBuilder.setResMsg("already be added to configuration");
                 return responseBuilder.build();
@@ -114,18 +114,18 @@ public class ClientServiceImpl implements ClientService
             Peer peer = new Peer(server);
             peer.setNextIndex(1);
             requestPeers.add(peer);
-            this.node.getPeerMap().putIfAbsent(server.getServerId(), peer);
-            this.node.getExecutorService().submit(() -> this.node.appendEntries(peer));
+            this.raftNode.getPeerMap().putIfAbsent(server.getServerId(), peer);
+            this.raftNode.getExecutorService().submit(() -> this.raftNode.appendEntries(peer));
         }
         int catchupNum = 0;
-        this.node.getLock().lock();
+        this.raftNode.getLock().lock();
         try
         {
             while (catchupNum < requestPeers.size())
             {
                 try
                 {
-                    this.node.getCatchUpCondition().await();
+                    this.raftNode.getCatchUpCondition().await();
                 }
                 catch (Exception ignored)
                 {
@@ -136,40 +136,40 @@ public class ClientServiceImpl implements ClientService
         }
         finally
         {
-            this.node.getLock().unlock();
+            this.raftNode.getLock().unlock();
         }
 
         if (catchupNum == requestPeers.size())
         {
-            this.node.getLock().lock();
+            this.raftNode.getLock().lock();
             byte[] configurationData;
             RaftProto.Configuration newConfiguration;
             try
             {
-                newConfiguration = RaftProto.Configuration.newBuilder(this.node.getConfiguration()).addAllServers(request.getServersList()).build();
+                newConfiguration = RaftProto.Configuration.newBuilder(this.raftNode.getConfiguration()).addAllServers(request.getServersList()).build();
                 configurationData = newConfiguration.toByteArray();
             }
             finally
             {
-                this.node.getLock().unlock();
+                this.raftNode.getLock().unlock();
             }
-            if (this.node.replicate(configurationData, RaftProto.EntryType.CONFIGURATION))
+            if (this.raftNode.replicate(configurationData, RaftProto.EntryType.CONFIGURATION))
                 responseBuilder.setResCode(RaftProto.ResCode.SUCCESS);
         }
         if (!Objects.equals(responseBuilder.getResCode(), RaftProto.ResCode.SUCCESS))
         {
-            this.node.getLock().lock();
+            this.raftNode.getLock().lock();
             try
             {
                 for (Peer peer : requestPeers)
                 {
                     peer.getRpcClient().stop();
-                    this.node.getPeerMap().remove(peer.getServer().getServerId());
+                    this.raftNode.getPeerMap().remove(peer.getServer().getServerId());
                 }
             }
             finally
             {
-                this.node.getLock().unlock();
+                this.raftNode.getLock().unlock();
             }
         }
         return responseBuilder.build();
@@ -186,33 +186,33 @@ public class ClientServiceImpl implements ClientService
             responseBuilder.setResMsg("removed server's size can only multiple of 2");
             return responseBuilder.build();
         }
-        this.node.getLock().lock();
+        this.raftNode.getLock().lock();
         try
         {
             for (RaftProto.Server server : request.getServersList())
             {
-                boolean exist = this.node.getConfiguration().getServersList().stream().filter(Objects::nonNull).anyMatch(e -> Objects.equals(e.getServerId(), server.getServerId()));
+                boolean exist = this.raftNode.getConfiguration().getServersList().stream().filter(Objects::nonNull).anyMatch(e -> Objects.equals(e.getServerId(), server.getServerId()));
                 if (!exist) return responseBuilder.build();
             }
         }
         finally
         {
-            this.node.getLock().unlock();
+            this.raftNode.getLock().unlock();
         }
 
-        this.node.getLock().lock();
+        this.raftNode.getLock().lock();
         RaftProto.Configuration newConfiguration;
         byte[] configurationData;
         try
         {
-            newConfiguration = RaftConfigurationUtil.removeServers(this.node.getConfiguration(), request.getServersList());
+            newConfiguration = RaftConfigurationUtil.removeServers(this.raftNode.getConfiguration(), request.getServersList());
             configurationData = newConfiguration.toByteArray();
         }
         finally
         {
-            this.node.getLock().unlock();
+            this.raftNode.getLock().unlock();
         }
-        if (this.node.replicate(configurationData, RaftProto.EntryType.CONFIGURATION))
+        if (this.raftNode.replicate(configurationData, RaftProto.EntryType.CONFIGURATION))
             responseBuilder.setResCode(RaftProto.ResCode.SUCCESS);
         return responseBuilder.build();
     }

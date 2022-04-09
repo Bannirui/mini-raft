@@ -40,19 +40,15 @@ public class CurdControllerTest extends TestCase
     @Test
     public void getOp() throws Exception
     {
-        String key = "hello";
+        String key = "hello01";
         MvcResult mvcResult = mockMvc.perform(MockMvcRequestBuilders.get("/client/get").contentType(MediaType.APPLICATION_JSON).param("key", key)).andExpect(MockMvcResultMatchers.status().isOk()).andDo(MockMvcResultHandlers.print()).andReturn();
-        String response = mvcResult.getResponse().getContentAsString();
-        System.out.println(response);
     }
 
     @Test
-    public void setOp() throws Exception
+    public void putOp() throws Exception
     {
-        String key = "hello";
-        String value = "world";
-        MvcResult mvcResult = mockMvc.perform(MockMvcRequestBuilders.get("/client/set").contentType(MediaType.APPLICATION_JSON).param("key", key).param("value", value)).andExpect(MockMvcResultMatchers.status().isOk()).andDo(MockMvcResultHandlers.print()).andReturn();
-        String response = mvcResult.getResponse().getContentAsString();
-        System.out.println(response);
+        String key = "hello01";
+        String value = "world01";
+        MvcResult mvcResult = mockMvc.perform(MockMvcRequestBuilders.get("/client/put").contentType(MediaType.APPLICATION_JSON).param("key", key).param("value", value)).andExpect(MockMvcResultMatchers.status().isOk()).andDo(MockMvcResultHandlers.print()).andReturn();
     }
 }

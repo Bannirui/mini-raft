@@ -1,6 +1,5 @@
 package com.github.bannirui.raft.common.util;
 
-import cn.hutool.core.io.FileUtil;
 import cn.hutool.core.io.file.FileMode;
 import com.github.bannirui.raft.bean.proto.RaftProto;
 import org.junit.Test;
@@ -10,7 +9,6 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.RandomAccessFile;
-import java.nio.charset.StandardCharsets;
 
 /**
  *
@@ -43,10 +41,11 @@ public class FileUtilTest
     @Test
     public void testCreateFile() throws IOException
     {
-        String src = "classpath:data/test.txt";
-        File file = ResourceUtils.getFile(src);
-        RandomAccessFile f = FileUtil.createRandomAccessFile(file, FileMode.rw);
-        String s = FileUtil.readLine(f, StandardCharsets.UTF_8);
+        String src = "classpath:data";
+        String newSrc = src + File.separator + "test";
+        File file = ResourceUtils.getFile(newSrc);
+        if(file.exists()) file.delete();
+        file.createNewFile();
         System.out.println();
     }
 }
