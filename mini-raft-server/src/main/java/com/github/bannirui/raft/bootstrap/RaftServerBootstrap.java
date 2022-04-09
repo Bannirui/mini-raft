@@ -5,14 +5,15 @@ import cn.hutool.core.convert.Convert;
 import cn.hutool.core.util.ArrayUtil;
 import cn.hutool.core.util.StrUtil;
 import com.baidu.brpc.server.RpcServer;
-import com.github.bannirui.raft.bean.config.RaftNodeOption;
 import com.github.bannirui.raft.bean.proto.RaftProto;
 import com.github.bannirui.raft.core.RaftNode;
 import com.github.bannirui.raft.core.service.impl.ClientServiceImpl;
 import com.github.bannirui.raft.core.service.impl.ConsensusServiceImpl;
 import com.github.bannirui.raft.service.impl.CurdServiceImpl;
 import com.github.bannirui.raft.service.impl.StateMachineImpl;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -28,6 +29,7 @@ import java.util.Objects;
  */
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class RaftServerBootstrap
 {
 
@@ -52,8 +54,32 @@ public class RaftServerBootstrap
     @Value("${app.cluster}")
     private String cluster;
 
+    @Autowired
+    StateMachineImpl stateMachine;
+
+    /**
+     * rpc 客户端调用
+     */
+    @Autowired
+    ClientServiceImpl clientService;
+
+    /**
+     * rpc 节点互相调用
+     */
+    @Autowired
+    ConsensusServiceImpl consensusService;
+
+    /**
+     * 自定义服务
+     */
+    @Autowired
+    CurdServiceImpl curdService;
+
+
     private List<RaftProto.Server> clusterServer;
     private RaftProto.Server localServer;
+
+    private final RaftNode raftNode;
 
     @PostConstruct
     public void init()
@@ -64,28 +90,14 @@ public class RaftServerBootstrap
         if (CollUtil.isEmpty(this.clusterServer) || Objects.isNull(this.localServer) || Objects.isNull(this.localServer.getEndpoint()) || Objects.isNull(port = this.localServer.getEndpoint().getPort()))
             throw new IllegalArgumentException("init failed caz config");
         RpcServer rpcServer = new RpcServer(port);
-        // raft配置
-        RaftNodeOption raftNodeOption = new RaftNodeOption();
-        raftNodeOption.setDataDir(this.dataPath);
-        raftNodeOption.setSnapshotMinLogSize(10 * 1024);
-        raftNodeOption.setSnapshotPeriodS(30);
-        raftNodeOption.setMaxSegmentFileSize(1024 * 1024);
-        // 状态机
-        StateMachineImpl stateMachine = new StateMachineImpl(this.dataPath);
-        // raft节点
-        RaftNode raftNode = new RaftNode(raftNodeOption, this.clusterServer, this.localServer, stateMachine);
-        // rpc 客户端调用
-        ClientServiceImpl clientService = new ClientServiceImpl(raftNode);
-        // rpc 节点互相调用
-        ConsensusServiceImpl consensusService = new ConsensusServiceImpl(raftNode);
-        // 自定义服务
-        CurdServiceImpl curdService = new CurdServiceImpl(raftNode, stateMachine);
-        rpcServer.registerService(clientService);
-        rpcServer.registerService(consensusService);
-        rpcServer.registerService(curdService);
+        // rpc服务
+        rpcServer.registerService(this.clientService);
+        rpcServer.registerService(this.consensusService);
+        rpcServer.registerService(this.curdService);
         // 启动rpc服务
         rpcServer.start();
-        raftNode.init();
+        // 初始化raft服务器节点
+        this.raftNode.init(this.clusterServer, this.localServer, this.stateMachine);
     }
 
     public void start()

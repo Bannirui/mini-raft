@@ -1,6 +1,9 @@
-package com.github.bannirui.raft.bean.config;
+package com.github.bannirui.raft.common.bean;
 
+import lombok.AllArgsConstructor;
+import lombok.Builder;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
 /**
  * <p>raft节点配置选项</p>
@@ -8,6 +11,9 @@ import lombok.Data;
  * @author dingrui
  */
 @Data
+@NoArgsConstructor
+@AllArgsConstructor
+@Builder
 public class RaftNodeOption
 {
     /**

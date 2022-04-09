@@ -9,6 +9,8 @@ import com.github.bannirui.raft.common.util.RaftConfigurationUtil;
 import com.github.bannirui.raft.core.RaftNode;
 import com.github.bannirui.raft.core.service.ConsensusService;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
 
 import java.io.File;
 import java.io.RandomAccessFile;
@@ -22,15 +24,12 @@ import java.util.Objects;
  * @author dingrui
  */
 @Slf4j
+@Service
 public class ConsensusServiceImpl implements ConsensusService
 {
 
-    private RaftNode raftNode;
-
-    public ConsensusServiceImpl(RaftNode raftNode)
-    {
-        this.raftNode = raftNode;
-    }
+    @Autowired
+    RaftNode raftNode;
 
     @Override
     public RaftProto.VoteResponse preVote(RaftProto.VoteRequest request)
@@ -103,8 +102,8 @@ public class ConsensusServiceImpl implements ConsensusService
     @Override
     public RaftProto.AppendEntriesResponse appendEntries(RaftProto.AppendEntriesRequest request)
     {
-        if (log.isErrorEnabled() && CollUtil.isNotEmpty(request.getEntriesList()))
-            log.error("{}为follower 收到来自{}这个leader的数据同步请求", this.raftNode.getLocalServer().getServerId(), request.getServerId());
+        if (log.isInfoEnabled() && CollUtil.isNotEmpty(request.getEntriesList()))
+            log.info("{}为follower 收到来自{}这个leader的数据同步请求", this.raftNode.getLocalServer().getServerId(), request.getServerId());
         this.raftNode.getLock().lock();
         try
         {

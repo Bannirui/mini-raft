@@ -9,7 +9,10 @@ import org.rocksdb.Checkpoint;
 import org.rocksdb.Options;
 import org.rocksdb.RocksDB;
 import org.rocksdb.RocksDBException;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
 
+import javax.annotation.PostConstruct;
 import java.io.File;
 import java.util.Objects;
 
@@ -19,22 +22,23 @@ import java.util.Objects;
  * @author dingrui
  */
 @Slf4j
+@Service
 public class StateMachineImpl implements StateMachine
 {
 
     private RocksDB db;
 
-    // ./data
-    private String raftDataDir;
+    /**
+     * raft集群节点日志根目录
+     * ./data
+     */
+    @Autowired
+    String raftDataDir;
 
-    static
+    @PostConstruct
+    public void init()
     {
         RocksDB.loadLibrary();
-    }
-
-    public StateMachineImpl(String raftDataDir)
-    {
-        this.raftDataDir = raftDataDir;
     }
 
     @Override
@@ -88,11 +92,12 @@ public class StateMachineImpl implements StateMachine
 
     public CurdProto.GetResponse get(CurdProto.GetRequest request)
     {
+        if (Objects.isNull(this.db)) throw new RuntimeException("db未初始化");
         try
         {
             CurdProto.GetResponse.Builder responseBuilder = CurdProto.GetResponse.newBuilder();
             String key = request.getKey();
-            if (log.isErrorEnabled()) log.error("状态机 收到请求 key={}", key);
+            if (log.isInfoEnabled()) log.error("状态机 收到请求 key={}", key);
             byte[] keyBytes = key.getBytes();
             byte[] valueBytes = this.db.get(keyBytes);
             if (Objects.nonNull(valueBytes))
@@ -105,7 +110,7 @@ public class StateMachineImpl implements StateMachine
         }
         catch (Exception e)
         {
-            log.error("状态机获取数据异常 err={}", e.getMessage());
+            log.info("状态机获取数据异常 err={}", e.getMessage());
             return null;
         }
     }

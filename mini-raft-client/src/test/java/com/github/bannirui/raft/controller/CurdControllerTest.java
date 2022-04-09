@@ -40,15 +40,15 @@ public class CurdControllerTest extends TestCase
     @Test
     public void getOp() throws Exception
     {
-        String key = "hello01";
+        String key = "hello00";
         MvcResult mvcResult = mockMvc.perform(MockMvcRequestBuilders.get("/client/get").contentType(MediaType.APPLICATION_JSON).param("key", key)).andExpect(MockMvcResultMatchers.status().isOk()).andDo(MockMvcResultHandlers.print()).andReturn();
     }
 
     @Test
     public void putOp() throws Exception
     {
-        String key = "hello01";
-        String value = "world01";
+        String key = "hello00";
+        String value = "world00";
         MvcResult mvcResult = mockMvc.perform(MockMvcRequestBuilders.get("/client/put").contentType(MediaType.APPLICATION_JSON).param("key", key).param("value", value)).andExpect(MockMvcResultMatchers.status().isOk()).andDo(MockMvcResultHandlers.print()).andReturn();
     }
 }

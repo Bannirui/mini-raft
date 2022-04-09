@@ -7,9 +7,11 @@ import com.baidu.brpc.client.instance.Endpoint;
 import com.github.bannirui.raft.api.bean.proto.CurdProto;
 import com.github.bannirui.raft.api.service.CurdService;
 import com.github.bannirui.raft.bean.proto.RaftProto;
-import com.github.bannirui.raft.core.RaftNode;
 import com.github.bannirui.raft.core.Peer;
+import com.github.bannirui.raft.core.RaftNode;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
 
 import java.util.Objects;
 import java.util.concurrent.locks.Lock;
@@ -21,11 +23,15 @@ import java.util.concurrent.locks.ReentrantLock;
  * @author dingrui
  */
 @Slf4j
+@Service
 public class CurdServiceImpl implements CurdService
 {
 
-    private RaftNode raftNode;
-    private StateMachineImpl stateMachine;
+    @Autowired
+    RaftNode raftNode;
+
+    @Autowired
+    StateMachineImpl stateMachine;
 
     /**
      * 每个服务实例都维护集群的leader serverId
@@ -41,30 +47,24 @@ public class CurdServiceImpl implements CurdService
     private RpcClient leaderRpcClient = null;
     private Lock leaderLock = new ReentrantLock();
 
-    public CurdServiceImpl(RaftNode raftNode, StateMachineImpl stateMachine)
-    {
-        this.raftNode = raftNode;
-        this.stateMachine = stateMachine;
-    }
-
     @Override
     public CurdProto.SetResponse put(CurdProto.SetRequest request)
     {
-        if (log.isErrorEnabled())
-            log.error("节点{} 收到put请求 key={}", this.raftNode.getLocalServer().getServerId(), request.getKey());
+        if (log.isInfoEnabled())
+            log.info("节点{} 收到put请求 key={}", this.raftNode.getLocalServer().getServerId(), request.getKey());
         CurdProto.SetResponse.Builder responseBuilder = CurdProto.SetResponse.newBuilder();
         // 该集群没有leader 不提供client端的读写请求
         if (this.raftNode.getLeaderId() <= 0)
         {
-            if (log.isErrorEnabled())
-                log.error("节点{} 维护在当前节点的leaderId=-1 表示集群没有leader 不提供客户端服务", this.raftNode.getLocalServer().getServerId());
+            if (log.isInfoEnabled())
+                log.info("节点{} 维护在当前节点的leaderId=-1 表示集群没有leader 不提供客户端服务", this.raftNode.getLocalServer().getServerId());
             responseBuilder.setSuccess(false);
         }
         else if (!Objects.equals(this.raftNode.getLeaderId(), this.raftNode.getLocalServer().getServerId()))
         {
             // 当前节点不是leader 将请求转发给leader节点
-            if (log.isErrorEnabled())
-                log.error("节点{} 集群leader={} 当前节点不是leader 将请求转发给leader", this.raftNode.getLocalServer().getServerId(), this.raftNode.getLeaderId());
+            if (log.isInfoEnabled())
+                log.info("节点{} 集群leader={} 当前节点不是leader 将请求转发给leader", this.raftNode.getLocalServer().getServerId(), this.raftNode.getLeaderId());
             // follower转发请求给leader之前 防止维护的leader信息已经过时 先尝试更新leader信息
             this.onLeaderChangeEvent();
             // 拿到leader rpc的代理
@@ -78,8 +78,8 @@ public class CurdServiceImpl implements CurdService
             byte[] data = request.toByteArray();
             boolean success = this.raftNode.replicate(data, RaftProto.EntryType.DATA);
             responseBuilder.setSuccess(success);
-            if (log.isErrorEnabled())
-                log.error("节点{} 是leader 处理put请求 key={} value={} 请求处理结果{}", this.raftNode.getLocalServer().getServerId(), request.getKey(), request.getValue(), success);
+            if (log.isInfoEnabled())
+                log.info("节点{} 是leader 处理put请求 key={} value={} 请求处理结果{}", this.raftNode.getLocalServer().getServerId(), request.getKey(), request.getValue(), success);
         }
         return responseBuilder.build();
     }
@@ -87,8 +87,8 @@ public class CurdServiceImpl implements CurdService
     @Override
     public CurdProto.GetResponse get(CurdProto.GetRequest request)
     {
-        if (log.isErrorEnabled())
-            log.error("节点{} 收到get请求 key={}", this.raftNode.getLocalServer().getServerId(), request.getKey());
+        if (log.isInfoEnabled())
+            log.info("节点{} 收到get请求 key={}", this.raftNode.getLocalServer().getServerId(), request.getKey());
         return this.stateMachine.get(request);
     }
 

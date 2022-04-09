@@ -6,6 +6,8 @@ import com.github.bannirui.raft.common.util.RaftConfigurationUtil;
 import com.github.bannirui.raft.core.RaftNode;
 import com.github.bannirui.raft.core.Peer;
 import com.github.bannirui.raft.core.service.ClientService;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -16,15 +18,12 @@ import java.util.Objects;
  * @since 2022/4/6
  * @author dingrui
  */
+@Service
 public class ClientServiceImpl implements ClientService
 {
 
-    private RaftNode raftNode;
-
-    public ClientServiceImpl(RaftNode raftNode)
-    {
-        this.raftNode = raftNode;
-    }
+    @Autowired
+    RaftNode raftNode;
 
     @Override
     public RaftProto.GetLeaderResponse getLeader(RaftProto.GetLeaderRequest request)

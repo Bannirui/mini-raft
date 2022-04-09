@@ -1,4 +1,4 @@
-package com.github.bannirui.raft.bean;
+package com.github.bannirui.raft.bean.enums;
 
 /**
  * <p>raft集群节点的状态</p>

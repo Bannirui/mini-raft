@@ -2,10 +2,10 @@ package com.github.bannirui.raft.core;
 
 import cn.hutool.core.collection.CollUtil;
 import com.baidu.brpc.client.RpcCallback;
-import com.github.bannirui.raft.bean.RaftNodeState;
-import com.github.bannirui.raft.bean.config.RaftNodeOption;
+import com.github.bannirui.raft.bean.enums.RaftNodeState;
 import com.github.bannirui.raft.bean.constant.FilePathConstant;
 import com.github.bannirui.raft.bean.proto.RaftProto;
+import com.github.bannirui.raft.common.bean.RaftNodeOption;
 import com.github.bannirui.raft.common.util.RaftConfigurationUtil;
 import com.github.bannirui.raft.core.storeage.SegmentLog;
 import com.github.bannirui.raft.core.storeage.Snapshot;
@@ -14,6 +14,8 @@ import com.googlecode.protobuf.format.JsonFormat;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.io.FileUtils;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
 
 import java.io.File;
 import java.util.*;
@@ -41,13 +43,20 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 @Slf4j
 @Data
+@Component
 public class RaftNode
 {
 
     /**
      * raft节点配置
      */
-    private RaftNodeOption raftNodeOption;
+    @Autowired
+    RaftNodeOption raftNodeOption;
+
+    /**
+     * 状态机
+     */
+    private StateMachine stateMachine;
 
     /**
      * 集群信息 所有的节点
@@ -65,11 +74,6 @@ public class RaftNode
      * 本机节点
      */
     private RaftProto.Server localServer;
-
-    /**
-     * 状态机
-     */
-    private StateMachine stateMachine;
 
     private SegmentLog raftLog;
 
@@ -119,10 +123,17 @@ public class RaftNode
     private ScheduledFuture electionScheduledFuture;
     private ScheduledFuture heartbeatScheduledFuture;
 
-    public RaftNode(RaftNodeOption raftNodeOption, List<RaftProto.Server> servers, RaftProto.Server localServer, StateMachine stateMachine)
+    /**
+     * <p>raft节点属性赋值初始化及启动</p>
+     * @since 2022/4/9
+     * @author dingrui
+     * @param servers 集群所有服务器
+     * @param localServer 本机服务器
+     * @return void
+     */
+    public void init(List<RaftProto.Server> servers, RaftProto.Server localServer, StateMachine stateMachine)
     {
-        // 配置
-        this.raftNodeOption = raftNodeOption;
+        this.stateMachine = stateMachine;
         // 集群
         RaftProto.Configuration.Builder configurationBuilder = RaftProto.Configuration.newBuilder();
         for (RaftProto.Server server : servers)
@@ -133,8 +144,6 @@ public class RaftNode
         this.configuration = configurationBuilder.build();
         // 本地服务器
         this.localServer = localServer;
-        // 状态机
-        this.stateMachine = stateMachine;
         // 日志数据
         this.raftLog = new SegmentLog(raftNodeOption.getDataDir(), raftNodeOption.getMaxSegmentFileSize());
         this.snapshot = new Snapshot(raftNodeOption.getDataDir());
@@ -159,6 +168,8 @@ public class RaftNode
             else if (Objects.equals(entry.getType(), RaftProto.EntryType.CONFIGURATION)) this.applyConfiguration(entry);
         }
         this.lastAppliedIndex = this.commitIndex;
+        // 启动节点
+        this.start();
     }
 
     /**
@@ -167,7 +178,7 @@ public class RaftNode
      * @author dingrui
      * @return void
      */
-    public void init()
+    private void start()
     {
         List<RaftProto.Server> serversList = this.configuration.getServersList();
         if (CollUtil.isEmpty(serversList)) return;
@@ -204,8 +215,8 @@ public class RaftNode
      */
     public boolean replicate(byte[] data, RaftProto.EntryType entryType)
     {
-        if (log.isErrorEnabled())
-            log.error("节点{} 收到日志数据同步请求 日志类型={} 日志内容={}", this.getLocalServer().getServerId(), entryType, data);
+        if (log.isInfoEnabled())
+            log.info("节点{} 收到日志数据同步请求 日志类型={} 日志内容={}", this.getLocalServer().getServerId(), entryType, data);
         this.lock.lock();
         long newLastLogIndex = 0L;
         try
@@ -213,21 +224,20 @@ public class RaftNode
             // 只有leader才能接收到来自客户端的请求 不是leader直接返回
             if (!Objects.equals(this.state, RaftNodeState.LEADER))
             {
-                if (log.isErrorEnabled())
-                    log.error("节点{} 当前节点状态state={} 不是leader 无权处理日志同步请求", this.getLocalServer().getServerId(), this.state);
+                if (log.isInfoEnabled())
+                    log.info("节点{} 当前节点状态state={} 不是leader 无权处理日志同步请求", this.getLocalServer().getServerId(), this.state);
                 return false;
             }
             // 日志
             RaftProto.LogEntry logEntry = RaftProto.LogEntry.newBuilder().setTerm(this.curTerm).setType(entryType).setData(ByteString.copyFrom(data)).build();
             // leader写日志
             newLastLogIndex = this.raftLog.append(logEntry);
-            if (log.isErrorEnabled())
-                log.error("节点{} leader节点写日志成功 新的logIndex={} 准备同步给集群follower", this.localServer.getServerId(), newLastLogIndex);
+            if (log.isInfoEnabled())
+                log.info("节点{} leader节点写日志成功 新的logIndex={} 准备同步给集群follower", this.localServer.getServerId(), newLastLogIndex);
             // leader将日志同步给follower
-            // TODO: 2022/4/9 除了自己之外所有的follower
             this.peerMap.values().forEach(peer -> {
-                if (log.isErrorEnabled())
-                    log.error("节点{}为leader 向follower{}发送日志同步请求的rpc", this.localServer.getServerId(), peer.getServer().getServerId());
+                if (log.isInfoEnabled())
+                    log.info("节点{}为leader 向follower{}发送日志同步请求的rpc", this.localServer.getServerId(), peer.getServer().getServerId());
                 if (Objects.nonNull(peer)) this.executorService.submit(() -> this.appendEntries(peer));
             });
             // 异步请求 leader写成功后就可以返回响应了
@@ -248,8 +258,8 @@ public class RaftNode
         {
             this.lock.unlock();
         }
-        if (log.isErrorEnabled())
-            log.error("节点{}是leader 同步完数据后 lastAppliedIndex={} newLastLogIndex={}", this.localServer.getServerId(), this.lastAppliedIndex, newLastLogIndex);
+        if (log.isInfoEnabled())
+            log.info("节点{}是leader 同步完数据后 lastAppliedIndex={} newLastLogIndex={}", this.localServer.getServerId(), this.lastAppliedIndex, newLastLogIndex);
         if (this.lastAppliedIndex < newLastLogIndex) return false;
         return true;
     }
@@ -283,7 +293,7 @@ public class RaftNode
         if (log.isInfoEnabled()) log.info("节点{}是否需要快照={}", peer.getServer().getServerId(), isNeedInstallSnapshot);
         if (isNeedInstallSnapshot && !this.installSnapshot(peer))
         {
-            if (log.isErrorEnabled()) log.error("节点{}为leader 需要进行快照 但是执行快照失败", this.localServer.getServerId());
+            if (log.isInfoEnabled()) log.info("节点{}为leader 需要进行快照 但是执行快照失败", this.localServer.getServerId());
             return;
         }
         long lastSnapshotIndex, lastSnapshotTerm;
@@ -328,8 +338,8 @@ public class RaftNode
         // rpc同步方法
         RaftProto.AppendEntriesResponse response = peer.getConsensusService().appendEntries(request);
         this.lock.lock();
-        if (log.isErrorEnabled() && CollUtil.isNotEmpty(request.getEntriesList()))
-            log.error("{}为leader 向follower发送的写日志请求为{} 收到follower的响应为{}}", this.localServer.getServerId(), new JsonFormat().printToString(request), new JsonFormat().printToString(response));
+        if (log.isInfoEnabled() && CollUtil.isNotEmpty(request.getEntriesList()))
+            log.info("{}为leader 向follower发送的写日志请求为{} 收到follower的响应为{}}", this.localServer.getServerId(), new JsonFormat().printToString(request), new JsonFormat().printToString(response));
         try
         {
             // leader没收到follower响应 主观判定follower为下线
@@ -447,7 +457,7 @@ public class RaftNode
             this.snapshot.getLock().lock();
             try
             {
-                if (log.isErrorEnabled()) log.error("节点{} 进行快照装载", this.localServer.getServerId());
+                if (log.isInfoEnabled()) log.info("节点{} 进行快照装载", this.localServer.getServerId());
                 // ./data/snapshot/.tmp
                 String tmpSnapshotDir = this.snapshot.getSnapshotDir() + FilePathConstant.Snapthot.Dir.SNAPSHOT_TMP;
                 this.snapshot.updateMetaData(tmpSnapshotDir, localLastAppliedIndex, lastAppliedTerm, localConfiguration.build());
@@ -461,7 +471,7 @@ public class RaftNode
                     File snapshotDirFile = new File(this.snapshot.getSnapshotDir());
                     if (snapshotDirFile.exists()) FileUtils.deleteDirectory(snapshotDirFile);
                     FileUtils.moveDirectory(new File(tmpSnapshotDir), new File(this.snapshot.getSnapshotDir()));
-                    if (log.isErrorEnabled()) log.error("节点{} 加载快照结束", this.localServer.getServerId());
+                    if (log.isInfoEnabled()) log.info("节点{} 加载快照结束", this.localServer.getServerId());
                     success = true;
                 }
                 catch (Exception ignored)
