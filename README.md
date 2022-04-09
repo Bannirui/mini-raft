@@ -59,12 +59,13 @@ raft implementation 8 java
 ### 目录结构
 
 ```shell
-mini-raft
-|--- mini-raft-api
-|--- mini-raft-bean
-|--- mini-raft-client   // 调用存取接口
-|--- mini-raft-common
-|--- mini-raft-core     // raft实现
-|--- mini-raft-server   // 系统整合raft 服务端 提供数据存取实现
-|___ README.md
+.
+├── README.md
+├── mini-raft-api
+├── mini-raft-bean
+├── mini-raft-client  // 调用存取接口
+├── mini-raft-common
+├── mini-raft-core    // raft实现
+├── mini-raft-server  // 系统整合raft 服务端 提供数据存取实现
+└── pom.xml
 ```
